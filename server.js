@@ -410,6 +410,8 @@ async function sendBookingSummaryForConfirmation(to, data) {
     }
   });
 }
-
+app.get('/privacy', (req, res) => {
+  res.send('<h1>Privacy Policy - Glamour Studio Parlour</h1><p>We collect customer name, phone number, and appointment details solely to schedule beauty parlour bookings via WhatsApp.</p>');
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Glamour Studio WhatsApp Bot running on port ${PORT}`));
