@@ -327,7 +327,7 @@ app.post('/webhook', async (req, res) => {
         to: from,
         type: 'image',
         image: {
-          link: PAYMENT_QR_IMAGE_URL,,
+          link: PAYMENT_QR_IMAGE_URL,
           caption: `💳 *Advance Payment Required: ₹1,000/-*\n\nPlease scan the QR code above using GPay, PhonePe, or Paytm to pay the *₹1,000 advance*.\n\nOnce paid, reply with *"PAID"* or send a screenshot of the payment to receive your official booking bill.`
         }
       });
