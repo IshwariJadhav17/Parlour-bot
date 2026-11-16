@@ -16,13 +16,13 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 // In-memory session store
 const userSessions = {};
 
-// Makeup Packages Catalog (From Amita's Makeover Rate Card)
+// Makeup Packages Catalog (Amita's Makeover Rate Card)
 const MAKEUP_PACKAGES = {
   pkg_bridal: {
     id: 'pkg_bridal',
     category: 'Makeup',
     title: 'Bridal Package',
-    rate: 15000, // Update base bridal rate if needed
+    rate: 15000,
     rateDisplay: '₹15,000/- (Custom Quote)',
     description: 'Includes Bridal Makeup, Hairstyle, Draping, Lenses & Lashes. (Traveling charges & optional jewellery rent extra).'
   },
@@ -52,7 +52,7 @@ const MAKEUP_PACKAGES = {
   }
 };
 
-// Nail Art Catalog (From Amita's Makeover Nail Art Menu)
+// Nail Art Catalog (Amita's Makeover Nail Art Menu)
 const NAIL_PACKAGES = {
   nail_hand: {
     id: 'nail_hand',
@@ -139,7 +139,7 @@ async function sendWhatsAppMessage(payload) {
   }
 }
 
-// Helper: Answer Custom Typed Questions (Gemini AI + Smart Fallback)
+// Helper: Answer Custom Typed Questions (Gemini AI + Smart Keyword Fallback)
 async function answerCustomQuestion(question) {
   if (GEMINI_API_KEY) {
     try {
@@ -162,7 +162,6 @@ Customer Question: "${question}"`;
     }
   }
 
-  // Smart Keyword Fallback if GEMINI_API_KEY is not set
   const q = question.toLowerCase();
   if (q.includes('price') || q.includes('rate') || q.includes('cost') || q.includes('charge')) {
     return '✨ Here are our rates:\n• *HD Makeup:* ₹6,000/-\n• *Luxury Makeup:* ₹8,000/-\n• *Touch-Up:* ₹1,000/-\n• *Nail Art:* Starts at ₹300/- & Extensions ₹1,000–₹1,500/-.';
@@ -193,6 +192,28 @@ function getUpcomingDates() {
     });
   }
   return dates;
+}
+
+// Helper: Send Main Menu (Inquiry vs Book Appointment)
+async function sendMainMenu(to, customerName) {
+  await sendWhatsAppMessage({
+    messaging_product: 'whatsapp',
+    to: to,
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: { type: 'text', text: "✨ AMITA'S MAKEOVER ✨" },
+      body: {
+        text: `Thank you, *${customerName}*! 🌸\nHow would you like to proceed today?`
+      },
+      action: {
+        buttons: [
+          { type: 'reply', reply: { id: 'menu_inquiry', title: 'Inquiry' } },
+          { type: 'reply', reply: { id: 'menu_book', title: 'Book Appointment' } }
+        ]
+      }
+    }
+  });
 }
 
 // Helper: Send Category Menu (Nail Art vs Makeup Packages)
@@ -286,29 +307,19 @@ app.post('/webhook', async (req, res) => {
     userInput = '[Payment Screenshot Uploaded]';
   }
 
-  // Detect Greetings ("hi", "hii", "hello") or Instagram Ad Referral
+  // STEP 0: Greeting / Instagram Ad Trigger -> Ask Name & 10-Digit Phone First
   const isGreeting = ['hi', 'hii', 'hiii', 'hello', 'hey', 'start', 'menu', 'restart'].includes(userInput.toLowerCase());
   const isFromAd = Boolean(message.referral);
 
   if (isGreeting || isFromAd || !userSessions[from]) {
-    userSessions[from] = { step: 'MAIN_MENU', data: {} };
+    userSessions[from] = { step: 'ASK_NAME_AND_PHONE', data: {} };
 
     await sendWhatsAppMessage({
       messaging_product: 'whatsapp',
       to: from,
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        header: { type: 'text', text: "✨ AMITA'S MAKEOVER ✨" },
-        body: {
-          text: `Welcome to *Amita’s Makeover*! 💄💅\nThank you for connecting with us${isFromAd ? ' from Instagram' : ''}.\n\nHow would you like to proceed today?`
-        },
-        action: {
-          buttons: [
-            { type: 'reply', reply: { id: 'menu_inquiry', title: 'Inquiry' } },
-            { type: 'reply', reply: { id: 'menu_book', title: 'Book Appointment' } }
-          ]
-        }
+      type: 'text',
+      text: {
+        body: `✨ *Welcome to Amita's Makeover!* ✨\nThank you for reaching out${isFromAd ? ' from Instagram' : ''}! 💄💅\n\nBefore we begin, please enter your *Full Name* and *10-digit Mobile Number* in one message:\n\n_Example: Priya Sharma, 9876543210_`
       }
     });
     return;
@@ -316,7 +327,49 @@ app.post('/webhook', async (req, res) => {
 
   const session = userSessions[from];
 
-  // Global Quick Jump: If user taps "Book Appointment" or "Inquiry" at any stage
+  // STEP 1: Validate & Save Name + 10-Digit Phone -> Show Inquiry / Book Appointment
+  if (session.step === 'ASK_NAME_AND_PHONE') {
+    const phoneMatch = userInput.match(/(\+91[\-\s]?)?[6-9]\d{9}/);
+
+    if (!phoneMatch) {
+      await sendWhatsAppMessage({
+        messaging_product: 'whatsapp',
+        to: from,
+        type: 'text',
+        text: {
+          body: `⚠️ Please enter a valid *10-digit Mobile Number* along with your *Full Name*:\n\n_Example: Priya Sharma, 9876543210_`
+        }
+      });
+      return;
+    }
+
+    const phone = phoneMatch[0].replace(/\D/g, '').slice(-10);
+    const name = userInput
+      .replace(phoneMatch[0], '')
+      .replace(/[,\-\n:]+/g, ' ')
+      .trim();
+
+    if (name.length < 2) {
+      await sendWhatsAppMessage({
+        messaging_product: 'whatsapp',
+        to: from,
+        type: 'text',
+        text: {
+          body: `⚠️ Please include your *Full Name* along with your 10-digit number:\n\n_Example: Priya Sharma, 9876543210_`
+        }
+      });
+      return;
+    }
+
+    session.data.name = name;
+    session.data.phone = phone;
+    session.step = 'MAIN_MENU';
+
+    await sendMainMenu(from, session.data.name);
+    return;
+  }
+
+  // Global Quick Jump Buttons: Inquiry vs Book Appointment
   if (interactiveId === 'menu_inquiry') {
     session.step = 'INQUIRY_MENU';
     await sendInquiryMenu(from);
@@ -324,17 +377,12 @@ app.post('/webhook', async (req, res) => {
   }
 
   if (interactiveId === 'menu_book') {
-    session.step = 'ASK_NAME';
-    await sendWhatsAppMessage({
-      messaging_product: 'whatsapp',
-      to: from,
-      type: 'text',
-      text: { body: `Let's book your slot at *Amita's Makeover*! 🌸\n\nPlease enter your *Full Name*:` }
-    });
+    session.step = 'SELECT_CATEGORY';
+    await sendServiceCategoryMenu(from);
     return;
   }
 
-  // INQUIRY FLOW: Handle Selected FAQ or Custom Question Prompt
+  // INQUIRY FLOW: Preset FAQ or Custom Question Prompt
   if (session.step === 'INQUIRY_MENU') {
     if (interactiveId === 'faq_custom') {
       session.step = 'INQUIRY_CUSTOM_TEXT';
@@ -390,34 +438,11 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // BOOKING STEP 1: Save Name -> Ask Phone Number
-  if (session.step === 'ASK_NAME') {
-    session.data.name = userInput;
-    session.step = 'ASK_PHONE';
-
-    await sendWhatsAppMessage({
-      messaging_product: 'whatsapp',
-      to: from,
-      type: 'text',
-      text: { body: `Thank you, *${session.data.name}*! ✨\n\nPlease enter your *10-digit Mobile Number*:` }
-    });
-    return;
-  }
-
-  // BOOKING STEP 2: Save Phone -> Show 2 Categories (Nail Art vs Makeup Packages)
-  if (session.step === 'ASK_PHONE') {
-    session.data.phone = userInput;
-    session.step = 'SELECT_CATEGORY';
-    await sendServiceCategoryMenu(from);
-    return;
-  }
-
-  // BOOKING STEP 3: Category Selected -> Show Nail Art Menu Image + List OR Makeup Packages List
+  // BOOKING STEP 1: Category Selected -> Show Nail Art Menu Image + List OR Makeup Packages List
   if (session.step === 'SELECT_CATEGORY') {
     if (interactiveId === 'cat_nailart') {
       session.step = 'SELECT_PACKAGE';
 
-      // 1. Send Nail Art Menu Image
       await sendWhatsAppMessage({
         messaging_product: 'whatsapp',
         to: from,
@@ -428,7 +453,6 @@ app.post('/webhook', async (req, res) => {
         }
       });
 
-      // 2. Send Selectable Nail Art Options List
       await sendWhatsAppMessage({
         messaging_product: 'whatsapp',
         to: from,
@@ -488,7 +512,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // BOOKING STEP 4: Package/Nail Art Selected -> Show Details & Date Picker
+  // BOOKING STEP 2: Package/Nail Art Selected -> Show Details & Date Picker
   if (session.step === 'SELECT_PACKAGE') {
     const selectedItem = MAKEUP_PACKAGES[interactiveId] || NAIL_PACKAGES[interactiveId];
     if (!selectedItem) {
@@ -530,7 +554,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // BOOKING STEP 5: Date Selected -> Ask Time Slot
+  // BOOKING STEP 3: Date Selected -> Ask Time Slot
   if (session.step === 'SELECT_DATE') {
     session.data.date = userInput;
     session.step = 'SELECT_TIME';
@@ -562,7 +586,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // BOOKING STEP 6: Time Selected -> Ask Parlour Visit vs Home Service
+  // BOOKING STEP 4: Time Selected -> Ask Parlour Visit vs Home Service
   if (session.step === 'SELECT_TIME') {
     session.data.time = userInput;
     session.step = 'SERVICE_LOCATION_TYPE';
@@ -585,7 +609,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // BOOKING STEP 7: Handle Parlour vs Home Location
+  // BOOKING STEP 5: Handle Parlour vs Home Location
   if (session.step === 'SERVICE_LOCATION_TYPE') {
     if (interactiveId === 'loc_home') {
       session.data.serviceMode = 'Home Service (Travel extra as per location)';
@@ -607,7 +631,7 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // BOOKING STEP 7B: Save Home Address -> Ask Confirmation
+  // BOOKING STEP 5B: Save Home Address -> Ask Confirmation
   if (session.step === 'ASK_ADDRESS') {
     session.data.address = userInput;
     session.step = 'CONFIRM_BOOKING';
@@ -615,13 +639,12 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // BOOKING STEP 8: Confirmation -> Advance Payment ONLY for Makeup; Instant Bill for Nail Art!
+  // BOOKING STEP 6: Confirmation -> Advance Payment ONLY for Makeup; Instant Bill for Nail Art
   if (session.step === 'CONFIRM_BOOKING') {
     if (interactiveId === 'confirm_yes') {
       const isMakeup = session.data.package.category === 'Makeup';
 
       if (isMakeup) {
-        // Makeup Package -> Require ₹1,000 Advance Payment
         session.step = 'AWAITING_PAYMENT';
         await sendWhatsAppMessage({
           messaging_product: 'whatsapp',
@@ -633,7 +656,6 @@ app.post('/webhook', async (req, res) => {
           }
         });
       } else {
-        // Nail Art -> NO Advance Payment Needed -> Generate Bill Immediately
         await sendFinalBillReceipt(from, session.data, 0);
         delete userSessions[from];
       }
@@ -649,14 +671,14 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // BOOKING STEP 9: Makeup Advance Paid -> Send Final Bill Receipt
+  // BOOKING STEP 7: Makeup Advance Paid -> Send Final Bill Receipt
   if (session.step === 'AWAITING_PAYMENT') {
     await sendFinalBillReceipt(from, session.data, 1000);
     delete userSessions[from];
   }
 });
 
-// Helper: Send Summary & Confirmation Buttons (Adapts button label for Makeup vs Nail Art)
+// Helper: Send Summary & Confirmation Buttons
 async function sendBookingSummaryForConfirmation(to, data) {
   const isMakeup = data.package.category === 'Makeup';
   const summary =
